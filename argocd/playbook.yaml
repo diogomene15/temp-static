@@ -1,0 +1,107 @@
+- name: Configurar Servidor com K3s e ArgoCD
+  hosts: all
+  become: true
+  vars:
+    install_user: "quati-infra"
+
+  tasks:
+    - name: 1. Etapa de Preparação do Sistema
+      block:
+        - name: Atualizar cache do APT e atualizar pacotes do sistema
+          ansible.builtin.apt:
+            update_cache: yes
+            upgrade: dist
+            cache_valid_time: 3600
+
+        - name: Instalar pacotes essenciais (docker.io)
+          ansible.builtin.apt:
+            name:
+              - docker.io
+            state: present
+
+    - name: 2. Instalação do K3s e Kubectl
+      block:
+        - name: Baixar e instalar K3s
+          ansible.builtin.shell:
+            cmd: curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--disable=traefik" sh -s -
+            creates: /usr/local/bin/k3s
+
+        - name: Obter a versão estável mais recente do kubectl
+          ansible.builtin.shell: "curl -L -s https://dl.k8s.io/release/stable.txt"
+          register: kubectl_stable_version
+          changed_when: false
+
+        - name: Baixar e instalar kubectl
+          ansible.builtin.get_url:
+            url: "https://dl.k8s.io/release/{{ kubectl_stable_version.stdout }}/bin/linux/amd64/kubectl"
+            dest: /usr/local/bin/kubectl
+            mode: '0755'
+            owner: root
+            group: root
+
+    - name: 3. Configuração de Usuário e Permissões
+      block:
+        - name: Garantir que o grupo 'k3s' exista
+          ansible.builtin.group:
+            name: k3s
+            state: present
+
+        - name: Criar o usuário '{{ install_user }}'
+          ansible.builtin.user:
+            name: "{{ install_user }}"
+            state: present
+            shell: /bin/bash
+
+        - name: Adicionar usuário '{{ install_user }}' aos grupos 'docker' e 'k3s'
+          ansible.builtin.user:
+            name: "{{ install_user }}"
+            groups: docker,k3s
+            append: yes
+
+        - name: Configurar permissões do diretório do k3s
+          ansible.builtin.file:
+            path: /etc/rancher
+            state: directory
+            owner: root
+            group: k3s
+            mode: '0770'
+            recurse: yes
+
+    - name: 4. Copiar arquivos de configuração
+      block:
+        - name: Copiar arquivos de configuração do ArgoCD
+          ansible.builtin.copy:
+            src: "{{ item }}"
+            dest: "/home/{{ install_user }}/{{ item }}"
+            owner: "{{ install_user }}"
+            group: "{{ install_user }}"
+            mode: '0644'
+          loop:
+            - argo-service.yaml
+
+    - name: 5. Deploy do ArgoCD e Configurações
+      become: true
+      become_user: "{{ install_user }}"
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      block:
+        - name: Adicionar KUBECONFIG ao .bashrc do usuário
+          ansible.builtin.lineinfile:
+            path: "/home/{{ install_user }}/.bashrc"
+            line: "export KUBECONFIG=/etc/rancher/k3s/k3s.yaml"
+            create: yes
+            state: present
+
+        - name: Criar o namespace 'argocd'
+          ansible.builtin.command: "kubectl create namespace argocd"
+          ignore_errors: yes
+
+        - name: Aplicar o manifesto de instalação do ArgoCD
+          ansible.builtin.command: "kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml"
+
+        - name: Aguardar pela criação dos serviços do ArgoCD
+          ansible.builtin.pause:
+            seconds: 30
+
+        - name: Aplicar service customizado do ArgoCD
+          ansible.builtin.command: "kubectl apply -f /home/{{ install_user }}/argo-service.yaml"
