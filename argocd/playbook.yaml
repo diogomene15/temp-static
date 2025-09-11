@@ -58,6 +58,16 @@
             groups: docker,k3s
             append: yes
 
+        - name: Reset connection para aplicar novos grupos
+          ansible.builtin.meta: reset_connection
+
+        - name: Ativar novo grupo k3s na sessão atual
+          ansible.builtin.shell: |
+            exec sg k3s -c "id"
+          become: true
+          become_user: "{{ install_user }}"
+          changed_when: false
+
         - name: Configurar permissões do diretório do k3s
           ansible.builtin.file:
             path: /etc/rancher
@@ -81,9 +91,6 @@
 
     - name: 5. Deploy do ArgoCD e Configurações
       become: true
-      become_user: "{{ install_user }}"
-      environment:
-        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
       block:
         - name: Adicionar KUBECONFIG ao .bashrc do usuário
           ansible.builtin.lineinfile:
@@ -92,16 +99,22 @@
             create: yes
             state: present
 
-        - name: Criar o namespace 'argocd'
-          ansible.builtin.command: "kubectl create namespace argocd"
+        - name: Criar o namespace 'argocd' com sg k3s
+          ansible.builtin.shell: |
+            sg k3s -c "KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl create namespace argocd"
+          become_user: "{{ install_user }}"
           ignore_errors: yes
 
-        - name: Aplicar o manifesto de instalação do ArgoCD
-          ansible.builtin.command: "kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml"
+        - name: Aplicar o manifesto de instalação do ArgoCD com sg k3s
+          ansible.builtin.shell: |
+            sg k3s -c "KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml"
+          become_user: "{{ install_user }}"
 
         - name: Aguardar pela criação dos serviços do ArgoCD
           ansible.builtin.pause:
             seconds: 30
 
-        - name: Aplicar service customizado do ArgoCD
-          ansible.builtin.command: "kubectl apply -f /home/{{ install_user }}/argo-service.yaml"
+        - name: Aplicar service customizado do ArgoCD com sg k3s
+          ansible.builtin.shell: |
+            sg k3s -c "KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl apply -f /home/{{ install_user }}/argo-service.yaml"
+          become_user: "{{ install_user }}"
