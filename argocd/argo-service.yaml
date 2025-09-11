@@ -24,7 +24,7 @@ spec:
     targetPort: 8080
   - name: https
     nodePort: 31729
-    port: 443
+    port: 32443
     protocol: TCP
     targetPort: 8080
   selector:

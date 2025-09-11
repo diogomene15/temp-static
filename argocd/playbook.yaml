@@ -2,7 +2,7 @@
   hosts: all
   become: true
   vars:
-    install_user: "quati-infra"
+    install_user: "mutum"
 
   tasks:
     - name: 1. Etapa de Preparação do Sistema
